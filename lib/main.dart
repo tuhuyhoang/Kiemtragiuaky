@@ -12,8 +12,12 @@ import 'repositories/favorites_repository.dart';
 import 'repositories/search_history_repository.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
+import 'services/database_helper.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Init sqflite FFI cho desktop (no-op trên Android/iOS)
+  DatabaseHelper.initIfNeeded();
   runApp(const NewsApp());
 }
 

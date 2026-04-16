@@ -1,5 +1,8 @@
+import 'dart:io' show Platform;
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Singleton quản lý database SQLite (sqflite).
 ///
@@ -17,8 +20,21 @@ class DatabaseHelper {
   static const int _dbVersion = 1;
 
   Database? _db;
+  static bool _ffiInitialized = false;
+
+  /// Init sqflite FFI cho desktop (Windows / Linux / macOS).
+  /// Trên Android/iOS thì sqflite native chạy thẳng, không cần init.
+  static void initIfNeeded() {
+    if (_ffiInitialized) return;
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
+    _ffiInitialized = true;
+  }
 
   Future<Database> get database async {
+    initIfNeeded();
     if (_db != null) return _db!;
     _db = await _open();
     return _db!;
@@ -27,6 +43,8 @@ class DatabaseHelper {
   Future<Database> _open() async {
     final dir = await getDatabasesPath();
     final path = p.join(dir, _dbName);
+    // ignore: avoid_print
+    print('===> SQLite DB path: $path');
     return openDatabase(
       path,
       version: _dbVersion,
