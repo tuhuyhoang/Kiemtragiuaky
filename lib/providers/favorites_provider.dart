@@ -5,32 +5,26 @@ import 'package:flutter/foundation.dart';
 import '../models/article.dart';
 import '../repositories/favorites_repository.dart';
 
-/// Provider quản lý danh sách bài yêu thích.
-/// Dữ liệu được persist vào SharedPreferences qua FavoritesRepository,
-/// nên vẫn còn khi người dùng tắt app và mở lại.
-///
-/// Tìm kiếm trong cả tiêu đề lẫn nội dung, có debounce 300ms.
+/// Provider quản lý favorites - dữ liệu lưu trên Firestore (per-user).
+/// Dùng stream realtime nên thay đổi từ thiết bị khác cũng tự cập nhật.
 class FavoritesProvider extends ChangeNotifier {
   FavoritesProvider({FavoritesRepository? repository})
-      : _repository = repository ?? FavoritesRepository() {
-    _loadFromStorage();
-  }
+      : _repository = repository ?? FavoritesRepository();
 
   final FavoritesRepository _repository;
 
+  String? _uid;
+  StreamSubscription<List<Article>>? _sub;
+
   final Map<int, Article> _favorites = {};
   String _query = '';
-  bool _ready = false;
   Timer? _debounce;
 
-  bool get isReady => _ready;
   int get count => _favorites.length;
   String get query => _query;
-  bool get hasQuery => _query.trim().isNotEmpty;
   List<Article> get favorites => _favorites.values.toList();
 
-  /// Trả về danh sách favorites đã lọc theo từ khóa.
-  /// Tìm trong: tiêu đề + nội dung (case-insensitive).
+  /// Tìm trong tiêu đề + nội dung (case-insensitive).
   List<Article> get filteredFavorites {
     if (_query.trim().isEmpty) return favorites;
     final q = _query.toLowerCase();
@@ -42,17 +36,37 @@ class FavoritesProvider extends ChangeNotifier {
 
   bool isFavorite(Article article) => _favorites.containsKey(article.id);
 
-  Future<void> toggle(Article article) async {
-    if (_favorites.containsKey(article.id)) {
-      _favorites.remove(article.id);
-    } else {
-      _favorites[article.id] = article;
+  /// Bind theo user uid - gọi khi user login. uid = null khi logout.
+  void bindUser(String? uid) {
+    if (_uid == uid) return;
+    _uid = uid;
+    _sub?.cancel();
+    _favorites.clear();
+
+    if (uid == null || uid.isEmpty) {
+      notifyListeners();
+      return;
     }
-    notifyListeners();
-    await _repository.save(_favorites.values.toList(growable: false));
+
+    _sub = _repository.watch(uid).listen((list) {
+      _favorites
+        ..clear()
+        ..addEntries(list.map((a) => MapEntry(a.id, a)));
+      notifyListeners();
+    });
   }
 
-  /// Cập nhật từ khóa tìm với debounce 300ms để tránh rebuild khi đang gõ.
+  Future<void> toggle(Article article) async {
+    final uid = _uid;
+    if (uid == null) return;
+    if (_favorites.containsKey(article.id)) {
+      await _repository.remove(uid, article.id);
+    } else {
+      await _repository.add(uid, article);
+    }
+    // Stream sẽ tự update _favorites
+  }
+
   void setQuery(String value) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
@@ -61,25 +75,16 @@ class FavoritesProvider extends ChangeNotifier {
     });
   }
 
-  /// Xóa từ khóa ngay lập tức (không debounce).
   void clearQuery() {
     _debounce?.cancel();
     _query = '';
     notifyListeners();
   }
 
-  Future<void> _loadFromStorage() async {
-    final list = await _repository.load();
-    _favorites
-      ..clear()
-      ..addEntries(list.map((a) => MapEntry(a.id, a)));
-    _ready = true;
-    notifyListeners();
-  }
-
   @override
   void dispose() {
     _debounce?.cancel();
+    _sub?.cancel();
     super.dispose();
   }
 }

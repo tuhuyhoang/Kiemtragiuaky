@@ -1,16 +1,22 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'providers/auth_provider.dart';
 import 'providers/favorites_provider.dart';
 import 'providers/news_provider.dart';
+import 'providers/search_history_provider.dart';
+import 'repositories/article_cache_repository.dart';
 import 'repositories/article_repository.dart';
 import 'repositories/auth_repository.dart';
 import 'repositories/favorites_repository.dart';
+import 'repositories/search_history_repository.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(const NewsApp());
 }
 
@@ -20,10 +26,14 @@ class NewsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Inject dependencies theo Clean Architecture:
-    //   Repository (Data)  ->  Provider (ViewModel)  ->  View
+    //   Repository (Data: Firebase Auth + Firestore + HTTP)
+    //     -> Provider (ViewModel)
+    //       -> View
     final articleRepo = ArticleRepository();
+    final articleCache = ArticleCacheRepository();
     final favoritesRepo = FavoritesRepository();
     final authRepo = AuthRepository();
+    final historyRepo = SearchHistoryRepository();
 
     return MultiProvider(
       providers: [
@@ -31,10 +41,16 @@ class NewsApp extends StatelessWidget {
           create: (_) => AuthProvider(repository: authRepo),
         ),
         ChangeNotifierProvider(
-          create: (_) => NewsProvider(repository: articleRepo),
+          create: (_) => NewsProvider(
+            repository: articleRepo,
+            cache: articleCache,
+          ),
         ),
         ChangeNotifierProvider(
           create: (_) => FavoritesProvider(repository: favoritesRepo),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => SearchHistoryProvider(repository: historyRepo),
         ),
       ],
       child: MaterialApp(
@@ -53,18 +69,24 @@ class NewsApp extends StatelessWidget {
   }
 }
 
-/// Widget quyết định hiển thị màn hình nào dựa trên trạng thái đăng nhập.
-/// - initializing: spinner toàn màn hình
-/// - unauthenticated: LoginScreen
-/// - authenticated: HomeScreen (3 màn hình News)
+/// Quyết định màn hình theo trạng thái đăng nhập + bind user vào các provider.
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final status = context.select<AuthProvider, AuthStatus>((p) => p.status);
+    final auth = context.watch<AuthProvider>();
 
-    switch (status) {
+    // Bind user uid vào các provider phụ thuộc (Favorites + SearchHistory).
+    // Khi login/logout, provider tự subscribe/unsubscribe Firestore stream.
+    final uid = auth.user?.uid;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+      context.read<FavoritesProvider>().bindUser(uid);
+      context.read<SearchHistoryProvider>().bindUser(uid);
+    });
+
+    switch (auth.status) {
       case AuthStatus.initializing:
         return const Scaffold(
           body: Center(child: CircularProgressIndicator()),

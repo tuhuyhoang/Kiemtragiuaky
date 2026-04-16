@@ -1,51 +1,45 @@
-import 'dart:convert';
-
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/article.dart';
 
-/// Repository lưu/đọc danh sách bài viết yêu thích vào SharedPreferences.
-/// Provider không cần biết dữ liệu được lưu ở đâu — chỉ cần gọi load/save.
+/// Repository lưu favorites trên Firestore.
+/// Cấu trúc: users/{uid}/favorites/{articleId}
+/// Mỗi user có collection favorites riêng - không chung với người khác.
 class FavoritesRepository {
-  static const String _storageKey = 'favorites_v1';
+  FavoritesRepository({FirebaseFirestore? firestore})
+      : _firestore = firestore ?? FirebaseFirestore.instance;
 
-  Future<List<Article>> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_storageKey);
-    if (raw == null || raw.isEmpty) return const [];
+  final FirebaseFirestore _firestore;
 
-    try {
-      final list = jsonDecode(raw) as List<dynamic>;
-      return list
-          .whereType<Map<String, dynamic>>()
-          .map(_articleFromStorage)
-          .toList(growable: false);
-    } catch (_) {
-      return const [];
-    }
+  CollectionReference<Map<String, dynamic>> _col(String uid) =>
+      _firestore.collection('users').doc(uid).collection('favorites');
+
+  /// Tải toàn bộ favorites của user (sắp xếp theo thời gian thêm gần nhất).
+  Future<List<Article>> load(String uid) async {
+    if (uid.isEmpty) return [];
+    final snap = await _col(uid).orderBy('addedAt', descending: true).get();
+    return snap.docs.map((d) => Article.fromMap(d.data())).toList();
   }
 
-  Future<void> save(List<Article> articles) async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = articles.map(_articleToStorage).toList(growable: false);
-    await prefs.setString(_storageKey, jsonEncode(data));
+  /// Stream realtime - UI tự động cập nhật khi thêm/xóa favorite.
+  Stream<List<Article>> watch(String uid) {
+    if (uid.isEmpty) return Stream.value(const []);
+    return _col(uid)
+        .orderBy('addedAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map((d) => Article.fromMap(d.data())).toList());
   }
 
-  Map<String, dynamic> _articleToStorage(Article a) => {
-        'id': a.id,
-        'title': a.title,
-        'body': a.body,
-        'imageUrl': a.imageUrl,
-        'publishedAt': a.publishedAt.toIso8601String(),
-      };
+  Future<void> add(String uid, Article article) async {
+    if (uid.isEmpty) return;
+    await _col(uid).doc(article.id.toString()).set({
+      ...article.toMap(),
+      'addedAt': FieldValue.serverTimestamp(),
+    });
+  }
 
-  Article _articleFromStorage(Map<String, dynamic> json) => Article(
-        id: json['id'] as int,
-        title: json['title'] as String? ?? '',
-        body: json['body'] as String? ?? '',
-        imageUrl: json['imageUrl'] as String? ??
-            'https://picsum.photos/seed/${json['id']}/600/400',
-        publishedAt: DateTime.tryParse(json['publishedAt'] as String? ?? '') ??
-            DateTime.now(),
-      );
+  Future<void> remove(String uid, int articleId) async {
+    if (uid.isEmpty) return;
+    await _col(uid).doc(articleId.toString()).delete();
+  }
 }

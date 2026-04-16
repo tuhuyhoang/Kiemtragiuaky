@@ -18,6 +18,7 @@ class Article {
     return clean.length > 120 ? '${clean.substring(0, 120)}...' : clean;
   }
 
+  /// Parse từ JSON API (JSONPlaceholder).
   factory Article.fromJson(Map<String, dynamic> json) {
     final id = json['id'] as int;
     return Article(
@@ -28,6 +29,28 @@ class Article {
       publishedAt: DateTime.now().subtract(Duration(hours: id * 2)),
     );
   }
+
+  /// Parse từ Firestore document.
+  factory Article.fromMap(Map<String, dynamic> map) {
+    return Article(
+      id: (map['id'] as num).toInt(),
+      title: (map['title'] as String?) ?? '',
+      body: (map['body'] as String?) ?? '',
+      imageUrl: (map['imageUrl'] as String?) ??
+          'https://picsum.photos/seed/${map['id']}/600/400',
+      publishedAt: DateTime.tryParse(map['publishedAt'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
+
+  /// Serialize cho Firestore.
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'title': title,
+        'body': body,
+        'imageUrl': imageUrl,
+        'publishedAt': publishedAt.toIso8601String(),
+      };
 
   @override
   bool operator ==(Object other) =>

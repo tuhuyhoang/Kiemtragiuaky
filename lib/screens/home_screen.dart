@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/news_provider.dart';
+import '../providers/search_history_provider.dart';
 import '../widgets/article_card.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/error_view.dart';
@@ -105,8 +106,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           SliverToBoxAdapter(
             child: SearchField(
-              hintText: 'Tìm bài theo tiêu đề...',
-              onChanged: news.setQuery,
+              hintText: 'Tìm bài theo tiêu đề/nội dung...',
+              onChanged: (q) {
+                news.setQuery(q);
+                if (q.trim().length >= 3) {
+                  context.read<SearchHistoryProvider>().add(q);
+                }
+              },
             ),
           ),
         ],

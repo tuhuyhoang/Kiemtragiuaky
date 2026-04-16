@@ -1,26 +1,25 @@
-/// Model đơn giản cho người dùng đăng ký trên app.
-/// Mật khẩu lưu plaintext trong SharedPreferences - đây là demo bài tập,
-/// không phải production. Trong thực tế cần hash bằng bcrypt/argon2.
+/// Model người dùng app, lưu cả thông tin Firebase Auth và profile từ Firestore.
 class AppUser {
   const AppUser({
+    required this.uid,
     required this.name,
     required this.email,
-    required this.password,
   });
 
+  final String uid;
   final String name;
   final String email;
-  final String password;
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toMap() => {
+        'uid': uid,
         'name': name,
         'email': email,
-        'password': password,
+        'createdAt': DateTime.now().toIso8601String(),
       };
 
-  factory AppUser.fromJson(Map<String, dynamic> json) => AppUser(
-        name: (json['name'] as String?) ?? '',
-        email: (json['email'] as String?) ?? '',
-        password: (json['password'] as String?) ?? '',
+  factory AppUser.fromMap(Map<String, dynamic> map) => AppUser(
+        uid: (map['uid'] as String?) ?? '',
+        name: (map['name'] as String?) ?? '',
+        email: (map['email'] as String?) ?? '',
       );
 }

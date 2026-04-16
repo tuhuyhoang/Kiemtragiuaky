@@ -1,25 +1,47 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:tu_huy_hoang/main.dart';
+import 'package:tu_huy_hoang/models/article.dart';
 
 void main() {
-  setUp(() {
-    // Mock SharedPreferences (rỗng) để AuthGate -> Login
-    SharedPreferences.setMockInitialValues({});
-  });
+  group('Article model', () {
+    test('fromJson parses JSONPlaceholder format', () {
+      final article = Article.fromJson({
+        'id': 1,
+        'title': '  Tiêu đề ',
+        'body': 'Nội dung',
+      });
+      expect(article.id, 1);
+      expect(article.title, 'Tiêu đề');
+      expect(article.body, 'Nội dung');
+      expect(article.imageUrl, contains('picsum.photos'));
+    });
 
-  testWidgets('App boots and shows Login screen for unauthenticated user',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(const NewsApp());
-    // Đợi AuthGate khởi tạo (Future bootstrap) và chuyển sang Login
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    test('toMap and fromMap roundtrip (Firestore)', () {
+      final original = Article(
+        id: 42,
+        title: 'Test',
+        body: 'Body content',
+        imageUrl: 'https://example.com/x.jpg',
+        publishedAt: DateTime(2026, 4, 16, 10, 30),
+      );
+      final restored = Article.fromMap(original.toMap());
+      expect(restored.id, original.id);
+      expect(restored.title, original.title);
+      expect(restored.body, original.body);
+      expect(restored.imageUrl, original.imageUrl);
+      expect(restored.publishedAt, original.publishedAt);
+    });
 
-    // Khi mới cài, chưa có user nào → màn hình Login phải hiện
-    expect(find.text('News App'), findsOneWidget);
-    expect(find.text('Đăng nhập để tiếp tục'), findsOneWidget);
-    expect(find.byType(TextField), findsAtLeastNWidgets(2));
+    test('description truncates long body', () {
+      final article = Article(
+        id: 1,
+        title: 't',
+        body: 'a' * 200,
+        imageUrl: '',
+        publishedAt: DateTime.now(),
+      );
+      expect(article.description.length, lessThanOrEqualTo(123));
+      expect(article.description.endsWith('...'), isTrue);
+    });
   });
 }

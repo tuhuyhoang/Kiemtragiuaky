@@ -1,110 +1,112 @@
-import 'dart:convert';
-
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/user.dart';
 
-/// Repository quản lý danh sách user đăng ký + session đang đăng nhập.
-/// Dữ liệu lưu vào SharedPreferences, không có backend thật.
+/// Repository quản lý authentication qua Firebase Auth + Firestore.
+/// - Firebase Auth: lưu email + password (đã hash bởi Google).
+/// - Firestore collection `users`: lưu profile (uid, name, email, createdAt).
 class AuthRepository {
-  static const String _usersKey = 'users_v1';
-  static const String _sessionKey = 'session_email_v1';
+  AuthRepository({FirebaseAuth? auth, FirebaseFirestore? firestore})
+      : _auth = auth ?? FirebaseAuth.instance,
+        _firestore = firestore ?? FirebaseFirestore.instance;
 
-  /// Lấy danh sách tất cả user đã đăng ký.
-  Future<List<AppUser>> _loadAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_usersKey);
-    if (raw == null || raw.isEmpty) return [];
-    try {
-      final list = jsonDecode(raw) as List<dynamic>;
-      return list
-          .whereType<Map<String, dynamic>>()
-          .map(AppUser.fromJson)
-          .toList();
-    } catch (_) {
-      return [];
-    }
-  }
+  final FirebaseAuth _auth;
+  final FirebaseFirestore _firestore;
 
-  Future<void> _saveAll(List<AppUser> users) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _usersKey,
-      jsonEncode(users.map((u) => u.toJson()).toList()),
-    );
-  }
+  CollectionReference<Map<String, dynamic>> get _usersCol =>
+      _firestore.collection('users');
 
-  /// Đăng ký user mới. Trả về user vừa tạo. Ném Exception nếu email đã tồn tại.
+  /// Đăng ký tài khoản mới.
   Future<AppUser> register({
     required String name,
     required String email,
     required String password,
   }) async {
-    final users = await _loadAll();
-    final normalizedEmail = email.trim().toLowerCase();
-
-    if (users.any((u) => u.email.toLowerCase() == normalizedEmail)) {
-      throw Exception('Email đã được đăng ký.');
+    try {
+      final cred = await _auth.createUserWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+      final user = AppUser(
+        uid: cred.user!.uid,
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+      );
+      await _usersCol.doc(user.uid).set(user.toMap());
+      // Cập nhật displayName trên Firebase Auth để tiện sau này
+      await cred.user!.updateDisplayName(name.trim());
+      return user;
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_authErrorVi(e));
     }
-
-    final user = AppUser(
-      name: name.trim(),
-      email: normalizedEmail,
-      password: password,
-    );
-    users.add(user);
-    await _saveAll(users);
-    await _setSession(user.email);
-    return user;
   }
 
-  /// Đăng nhập. Trả về user hoặc ném Exception.
+  /// Đăng nhập.
   Future<AppUser> login({
     required String email,
     required String password,
   }) async {
-    final users = await _loadAll();
-    final normalizedEmail = email.trim().toLowerCase();
-
-    AppUser? found;
-    for (final u in users) {
-      if (u.email.toLowerCase() == normalizedEmail) {
-        found = u;
-        break;
+    try {
+      final cred = await _auth.signInWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+      final uid = cred.user!.uid;
+      final doc = await _usersCol.doc(uid).get();
+      if (doc.exists) {
+        return AppUser.fromMap(doc.data()!);
       }
+      // Fallback nếu doc bị thiếu: tạo từ Firebase Auth user
+      final fallback = AppUser(
+        uid: uid,
+        name: cred.user!.displayName ?? email.split('@').first,
+        email: email.trim().toLowerCase(),
+      );
+      await _usersCol.doc(uid).set(fallback.toMap());
+      return fallback;
+    } on FirebaseAuthException catch (e) {
+      throw Exception(_authErrorVi(e));
     }
-
-    if (found == null) {
-      throw Exception('Email chưa được đăng ký.');
-    }
-    if (found.password != password) {
-      throw Exception('Sai mật khẩu.');
-    }
-
-    await _setSession(found.email);
-    return found;
   }
 
-  Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_sessionKey);
-  }
+  Future<void> logout() => _auth.signOut();
 
-  /// Trả về user đang đăng nhập (đọc từ session), null nếu chưa.
+  /// Trả về user hiện tại (nếu còn session lưu trong Firebase Auth).
   Future<AppUser?> currentUser() async {
-    final prefs = await SharedPreferences.getInstance();
-    final email = prefs.getString(_sessionKey);
-    if (email == null || email.isEmpty) return null;
-
-    final users = await _loadAll();
-    for (final u in users) {
-      if (u.email == email) return u;
-    }
-    return null;
+    final fbUser = _auth.currentUser;
+    if (fbUser == null) return null;
+    try {
+      final doc = await _usersCol.doc(fbUser.uid).get();
+      if (doc.exists) return AppUser.fromMap(doc.data()!);
+    } catch (_) {}
+    return AppUser(
+      uid: fbUser.uid,
+      name: fbUser.displayName ?? (fbUser.email ?? '').split('@').first,
+      email: fbUser.email ?? '',
+    );
   }
 
-  Future<void> _setSession(String email) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_sessionKey, email);
+  /// Stream theo dõi auth state để Provider tự cập nhật.
+  Stream<User?> authStateChanges() => _auth.authStateChanges();
+
+  String _authErrorVi(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'email-already-in-use':
+        return 'Email đã được đăng ký.';
+      case 'invalid-email':
+        return 'Email không hợp lệ.';
+      case 'weak-password':
+        return 'Mật khẩu quá yếu (tối thiểu 6 ký tự).';
+      case 'user-not-found':
+        return 'Email chưa được đăng ký.';
+      case 'wrong-password':
+      case 'invalid-credential':
+        return 'Sai email hoặc mật khẩu.';
+      case 'network-request-failed':
+        return 'Không có kết nối mạng.';
+      default:
+        return e.message ?? 'Lỗi xác thực: ${e.code}';
+    }
   }
 }

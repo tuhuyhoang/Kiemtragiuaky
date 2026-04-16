@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:flutter/foundation.dart';
 
 import '../models/user.dart';
@@ -5,8 +8,7 @@ import '../repositories/auth_repository.dart';
 
 enum AuthStatus { initializing, unauthenticated, authenticated }
 
-/// ViewModel cho trạng thái đăng nhập.
-/// Gọi AuthRepository (SharedPreferences) để persist session.
+/// ViewModel cho trạng thái đăng nhập, dùng Firebase Auth qua AuthRepository.
 class AuthProvider extends ChangeNotifier {
   AuthProvider({AuthRepository? repository})
       : _repository = repository ?? AuthRepository() {
@@ -14,6 +16,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   final AuthRepository _repository;
+  StreamSubscription<fb_auth.User?>? _sub;
 
   AuthStatus _status = AuthStatus.initializing;
   AppUser? _user;
@@ -22,6 +25,7 @@ class AuthProvider extends ChangeNotifier {
 
   AuthStatus get status => _status;
   AppUser? get user => _user;
+  String? get uid => _user?.uid;
   String? get errorMessage => _errorMessage;
   bool get busy => _busy;
 
@@ -31,6 +35,18 @@ class AuthProvider extends ChangeNotifier {
         ? AuthStatus.unauthenticated
         : AuthStatus.authenticated;
     notifyListeners();
+
+    // Theo dõi auth state thay đổi (logout từ device khác, token hết hạn, v.v.)
+    _sub = _repository.authStateChanges().listen((fbUser) async {
+      if (fbUser == null) {
+        _user = null;
+        _status = AuthStatus.unauthenticated;
+      } else if (_user == null || _user!.uid != fbUser.uid) {
+        _user = await _repository.currentUser();
+        _status = AuthStatus.authenticated;
+      }
+      notifyListeners();
+    });
   }
 
   Future<bool> login({required String email, required String password}) async {
@@ -78,11 +94,6 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void clearError() {
-    _errorMessage = null;
-    notifyListeners();
-  }
-
   void _setBusy(bool value) {
     _busy = value;
     notifyListeners();
@@ -90,4 +101,10 @@ class AuthProvider extends ChangeNotifier {
 
   String _cleanError(Object e) =>
       e.toString().replaceFirst('Exception: ', '');
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 }

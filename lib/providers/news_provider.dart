@@ -3,28 +3,37 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/article.dart';
+import '../repositories/article_cache_repository.dart';
 import '../repositories/article_repository.dart';
 
 enum NewsStatus { idle, loading, success, error }
 
-/// ViewModel (Controller) cho danh sách tin tức.
-/// Dùng ArticleRepository làm data source (Clean Architecture).
+/// ViewModel cho danh sách tin tức.
+/// - Tải từ ArticleRepository (API).
+/// - Cache vào Firestore qua ArticleCacheRepository.
+/// - Khi mất mạng: thử đọc từ cache.
 class NewsProvider extends ChangeNotifier {
-  NewsProvider({ArticleRepository? repository})
-      : _repository = repository ?? ArticleRepository();
+  NewsProvider({
+    ArticleRepository? repository,
+    ArticleCacheRepository? cache,
+  })  : _repository = repository ?? ArticleRepository(),
+        _cache = cache ?? ArticleCacheRepository();
 
   final ArticleRepository _repository;
+  final ArticleCacheRepository _cache;
 
   List<Article> _articles = [];
   NewsStatus _status = NewsStatus.idle;
   String? _errorMessage;
   String _query = '';
   Timer? _debounce;
+  bool _fromCache = false;
 
   List<Article> get articles => _articles;
   NewsStatus get status => _status;
   String? get errorMessage => _errorMessage;
   String get query => _query;
+  bool get isFromCache => _fromCache;
 
   /// Lọc theo từ khóa - tìm trong cả tiêu đề và nội dung.
   List<Article> get filteredArticles {
@@ -44,14 +53,25 @@ class NewsProvider extends ChangeNotifier {
     try {
       _articles = await _repository.getArticles();
       _status = NewsStatus.success;
+      _fromCache = false;
+      // Cache lên Firestore (background, không await để không chặn UI)
+      _cache.cacheAll(_articles).catchError((_) {});
     } catch (e) {
       _errorMessage = e.toString().replaceFirst('Exception: ', '');
-      _status = NewsStatus.error;
+      // Thử đọc cache khi mất mạng
+      final cached = await _cache.loadCache();
+      if (cached.isNotEmpty) {
+        _articles = cached;
+        _fromCache = true;
+        _status = NewsStatus.success;
+        _errorMessage = '$_errorMessage (đang xem dữ liệu offline)';
+      } else {
+        _status = NewsStatus.error;
+      }
     }
     notifyListeners();
   }
 
-  /// Cập nhật từ khóa tìm kiếm có debounce 300ms để tránh rebuild quá nhiều khi gõ.
   void setQuery(String value) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
