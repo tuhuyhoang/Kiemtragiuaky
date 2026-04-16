@@ -1,54 +1,44 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
 import '../repositories/search_history_repository.dart';
 
-/// Provider quản lý lịch sử tìm kiếm của user.
+/// Provider quản lý lịch sử tìm kiếm của user trong SQLite.
 class SearchHistoryProvider extends ChangeNotifier {
   SearchHistoryProvider({SearchHistoryRepository? repository})
       : _repository = repository ?? SearchHistoryRepository();
 
   final SearchHistoryRepository _repository;
 
-  String? _uid;
-  StreamSubscription<List<String>>? _sub;
+  int? _userId;
   List<String> _recent = [];
 
   List<String> get recent => _recent;
 
-  void bindUser(String? uid) {
-    if (_uid == uid) return;
-    _uid = uid;
-    _sub?.cancel();
+  Future<void> bindUser(int? userId) async {
+    if (_userId == userId) return;
+    _userId = userId;
     _recent = [];
-
-    if (uid == null || uid.isEmpty) {
+    if (userId == null) {
       notifyListeners();
       return;
     }
-
-    _sub = _repository.watchRecent(uid).listen((list) {
-      _recent = list;
-      notifyListeners();
-    });
+    _recent = await _repository.recent(userId);
+    notifyListeners();
   }
 
   Future<void> add(String query) async {
-    final uid = _uid;
+    final uid = _userId;
     if (uid == null) return;
     await _repository.add(uid, query);
+    _recent = await _repository.recent(uid);
+    notifyListeners();
   }
 
   Future<void> clear() async {
-    final uid = _uid;
+    final uid = _userId;
     if (uid == null) return;
     await _repository.clear(uid);
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
+    _recent = [];
+    notifyListeners();
   }
 }

@@ -1,24 +1,17 @@
-/// Model người dùng app, lưu cả thông tin Firebase Auth và profile từ Firestore.
+/// Model người dùng - lưu trong bảng `users` SQLite.
 class AppUser {
   const AppUser({
-    required this.uid,
+    required this.id,
     required this.name,
     required this.email,
   });
 
-  final String uid;
+  final int id;
   final String name;
   final String email;
 
-  Map<String, dynamic> toMap() => {
-        'uid': uid,
-        'name': name,
-        'email': email,
-        'createdAt': DateTime.now().toIso8601String(),
-      };
-
   factory AppUser.fromMap(Map<String, dynamic> map) => AppUser(
-        uid: (map['uid'] as String?) ?? '',
+        id: map['id'] as int,
         name: (map['name'] as String?) ?? '',
         email: (map['email'] as String?) ?? '',
       );

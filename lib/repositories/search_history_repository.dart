@@ -1,60 +1,50 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/database_helper.dart';
 
-/// Lưu lịch sử tìm kiếm theo từng user.
-/// Cấu trúc: users/{uid}/search_history/{auto-id}
+/// Lưu lịch sử tìm kiếm theo từng user trong bảng `search_history`.
 class SearchHistoryRepository {
-  SearchHistoryRepository({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+  SearchHistoryRepository({DatabaseHelper? db})
+      : _db = db ?? DatabaseHelper.instance;
 
-  final FirebaseFirestore _firestore;
-
-  CollectionReference<Map<String, dynamic>> _col(String uid) =>
-      _firestore.collection('users').doc(uid).collection('search_history');
+  final DatabaseHelper _db;
 
   /// Thêm 1 từ khóa - đồng thời xóa duplicate cũ để chỉ giữ bản mới nhất.
-  Future<void> add(String uid, String query) async {
+  Future<void> add(int userId, String query) async {
     final q = query.trim();
-    if (uid.isEmpty || q.isEmpty) return;
+    if (q.isEmpty) return;
 
-    // Xóa các entry trùng từ khóa cũ
-    final dup = await _col(uid).where('query', isEqualTo: q).get();
-    for (final doc in dup.docs) {
-      await doc.reference.delete();
-    }
-
-    await _col(uid).add({
+    final db = await _db.database;
+    // Xóa duplicate (cùng user_id + query)
+    await db.delete(
+      'search_history',
+      where: 'user_id = ? AND query = ?',
+      whereArgs: [userId, q],
+    );
+    await db.insert('search_history', {
+      'user_id': userId,
       'query': q,
-      'createdAt': FieldValue.serverTimestamp(),
+      'created_at': DateTime.now().millisecondsSinceEpoch,
     });
   }
 
   /// Đọc N từ khóa gần nhất.
-  Future<List<String>> recent(String uid, {int limit = 10}) async {
-    if (uid.isEmpty) return [];
-    final snap = await _col(uid)
-        .orderBy('createdAt', descending: true)
-        .limit(limit)
-        .get();
-    return snap.docs.map((d) => d.data()['query'] as String).toList();
+  Future<List<String>> recent(int userId, {int limit = 10}) async {
+    final db = await _db.database;
+    final rows = await db.query(
+      'search_history',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
+    return rows.map((r) => r['query'] as String).toList();
   }
 
-  /// Stream realtime cho UI suggest.
-  Stream<List<String>> watchRecent(String uid, {int limit = 10}) {
-    if (uid.isEmpty) return Stream.value(const []);
-    return _col(uid)
-        .orderBy('createdAt', descending: true)
-        .limit(limit)
-        .snapshots()
-        .map((s) => s.docs.map((d) => d.data()['query'] as String).toList());
-  }
-
-  Future<void> clear(String uid) async {
-    if (uid.isEmpty) return;
-    final snap = await _col(uid).get();
-    final batch = _firestore.batch();
-    for (final doc in snap.docs) {
-      batch.delete(doc.reference);
-    }
-    await batch.commit();
+  Future<void> clear(int userId) async {
+    final db = await _db.database;
+    await db.delete(
+      'search_history',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+    );
   }
 }

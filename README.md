@@ -1,98 +1,95 @@
 # News App - Quản lý tin tức cá nhân
 
-Ứng dụng Flutter dùng **Firebase Firestore** + **Firebase Auth** làm database.
+Ứng dụng Flutter dùng **SQLite (sqflite)** làm database local — không cần internet, không cần backend.
 Sinh viên: **Từ Huy Hoàng**.
 
 ---
 
-## ⚠️ QUAN TRỌNG - Cài đặt Firebase trước khi chạy
+## ✨ Cài đặt và chạy (rất đơn giản)
 
-App này dùng Firebase nên **bắt buộc** phải có file `google-services.json` trước khi chạy.
-
-### Bước 1: Tạo Firebase project
-1. Truy cập https://console.firebase.google.com
-2. **Add project** → nhập tên (VD: "news-app-tu-huy-hoang") → Continue
-3. Tắt Google Analytics (không cần) → Create project
-
-### Bước 2: Add Android app
-1. Trong project, bấm icon Android
-2. **Android package name**: `com.example.hhhhhhhhhh` ⚠️ phải đúng tên này
-3. App nickname: tùy ý
-4. SHA-1: bỏ trống
-5. Bấm **Register app**
-6. **Download `google-services.json`**
-7. Đặt file vào: `android/app/google-services.json`
-8. Skip 2 bước cuối (đã config trong gradle)
-
-### Bước 3: Bật Authentication
-1. Build → **Authentication** → Get started
-2. Sign-in method → **Email/Password** → Enable → Save
-
-### Bước 4: Tạo Firestore Database
-1. Build → **Firestore Database** → Create database
-2. Chọn location (asia-southeast1 cho VN) → Next
-3. Chọn **Start in test mode** → Create
-
-### Bước 5: Cập nhật Security Rules (test mode)
-Vào tab **Rules**, dán:
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-    match /articles/{document=**} {
-      allow read, write: if request.auth != null;
-    }
-  }
-}
-```
-
-### Bước 6: Chạy app
 ```bash
 flutter pub get
 flutter run
 ```
 
+**Không cần** Firebase, không cần download file config nào, không cần internet.
+
 ---
 
-## 1. Database (Firestore) - 4 collections
+## 1. Database SQLite — 4 bảng
 
-| Collection | Mô tả |
-|-----------|-------|
-| `users/{uid}` | Profile user (uid, name, email, createdAt) |
-| `users/{uid}/favorites/{articleId}` | Bài yêu thích của user |
-| `users/{uid}/search_history/{auto}` | Lịch sử tìm kiếm (query, createdAt) |
-| `articles/{id}` | Cache bài viết để xem offline |
+File DB tự tạo lần đầu chạy app, lưu tại:
+- Android: `/data/data/com.example.hhhhhhhhhh/databases/news_app.db`
 
-**Authentication**: dùng Firebase Auth (email + password) - Google tự hash mật khẩu, không cần lưu trong Firestore.
+### Schema
+
+```sql
+-- Tài khoản
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,    -- SHA-256 (không lưu plaintext)
+  created_at INTEGER NOT NULL
+);
+
+-- Bài yêu thích (theo user)
+CREATE TABLE favorites (
+  user_id INTEGER NOT NULL,
+  article_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  image_url TEXT NOT NULL,
+  published_at TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, article_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Cache bài đã tải (xem offline)
+CREATE TABLE articles_cache (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  image_url TEXT NOT NULL,
+  published_at TEXT NOT NULL,
+  cached_at INTEGER NOT NULL
+);
+
+-- Lịch sử tìm kiếm (theo user)
+CREATE TABLE search_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  query TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
 
 ---
 
 ## 2. Tính năng
 
-### Đăng ký / Đăng nhập (Firebase Auth)
-- Tạo account với email + password.
-- Session tự động duy trì (Firebase Auth lưu token).
+### Đăng ký / Đăng nhập
+- Email + password (hash SHA-256 trước khi lưu DB).
+- Session lưu `current_user_id` trong SharedPreferences.
 - Đăng xuất → quay về Login.
 
 ### Tab Tin tức
 - Tải bài từ JSONPlaceholder API.
-- Tự **cache vào Firestore** mỗi lần load thành công.
-- **Mất mạng** → tự đọc từ cache → vẫn xem được.
+- Tự cache vào bảng `articles_cache` mỗi lần load thành công.
+- Mất mạng → tự đọc cache → vẫn xem được.
 - Pull-to-refresh.
-- Search theo title + body, lưu **lịch sử tìm kiếm** vào Firestore.
+- Search title + body, debounce 300ms, lưu lịch sử vào `search_history`.
 
 ### Tab Yêu thích
-- Toggle favorite → ghi/xóa trên Firestore.
-- **Realtime stream** - vote ở thiết bị này, thiết bị kia thấy ngay.
-- Search trong yêu thích (title + body), debounce 300ms.
-- Hiển thị số kết quả tìm thấy.
+- Toggle favorite → INSERT/DELETE bảng `favorites`.
+- Search trong yêu thích (title + body).
+- Hiển thị số kết quả + chip filter.
 
 ### Tab Tài khoản
 - Avatar (chữ cái đầu tên).
-- Hiển thị tên + email từ Firestore.
+- Tên + email từ DB.
 - Số bài yêu thích.
 - Nút **Đăng xuất** với dialog confirm.
 
@@ -122,11 +119,11 @@ flutter run
 │   - ArticleCacheRepository │
 │   - SearchHistoryRepository│
 └────────────┬───────────────┘
-             │ gọi
+             │ truy cập
 ┌────────────▼───────────────┐
 │      Data Source           │
-│   - Firebase Auth          │
-│   - Cloud Firestore        │
+│   - SQLite (sqflite)       │
+│   - SharedPreferences      │
 │   - HTTP (JSONPlaceholder) │
 └────────────────────────────┘
 ```
@@ -137,19 +134,20 @@ flutter run
 
 ```
 lib/
-├── main.dart                           # Init Firebase + AuthGate + bind providers
+├── main.dart                           # MultiProvider + AuthGate
 ├── models/
-│   ├── article.dart                    # toMap/fromMap cho Firestore
+│   ├── article.dart
 │   └── user.dart
 ├── services/
-│   └── news_api.dart                   # HTTP gọi JSONPlaceholder
-├── repositories/                       # Tầng truy cập dữ liệu
-│   ├── auth_repository.dart            # Firebase Auth + users collection
-│   ├── favorites_repository.dart       # users/{uid}/favorites
+│   ├── news_api.dart                   # HTTP gọi JSONPlaceholder
+│   └── database_helper.dart            # SQLite singleton + create tables
+├── repositories/
+│   ├── auth_repository.dart            # SQLite users + SHA-256 hash
+│   ├── favorites_repository.dart       # SQLite favorites
 │   ├── article_repository.dart         # Wrap NewsApi
-│   ├── article_cache_repository.dart   # Collection articles (cache)
-│   └── search_history_repository.dart  # users/{uid}/search_history
-├── providers/                          # ViewModel (ChangeNotifier)
+│   ├── article_cache_repository.dart   # SQLite articles_cache
+│   └── search_history_repository.dart  # SQLite search_history
+├── providers/
 │   ├── auth_provider.dart
 │   ├── news_provider.dart
 │   ├── favorites_provider.dart
@@ -157,7 +155,7 @@ lib/
 ├── screens/
 │   ├── login_screen.dart
 │   ├── register_screen.dart
-│   ├── main_shell.dart                 # Bottom nav 3 tab
+│   ├── main_shell.dart
 │   ├── home_screen.dart
 │   ├── favorites_screen.dart
 │   ├── detail_screen.dart
@@ -176,47 +174,37 @@ lib/
 
 | Package | Mục đích |
 |--------|----------|
-| `firebase_core` | Khởi tạo Firebase |
-| `firebase_auth` | Đăng ký, đăng nhập, session |
-| `cloud_firestore` | Database NoSQL realtime |
-| `http` | Gọi JSONPlaceholder |
+| `sqflite` | Database SQLite local |
+| `path` | Build path tới file DB |
+| `crypto` | Hash password SHA-256 |
+| `shared_preferences` | Lưu session (current_user_id) |
+| `http` | Gọi JSONPlaceholder API |
 | `provider` | State management |
 | `intl` | Format ngày tháng |
-| `shared_preferences` | (legacy - vẫn giữ) |
 
 ---
 
-## 6. Cách chạy
+## 6. Cách xem dữ liệu trong DB
+
+### Cách 1: Android Studio Database Inspector
+1. Run app trên emulator.
+2. Mở **View → Tool Windows → App Inspection → Database Inspector**.
+3. Chọn process → thấy `news_app.db` → browse 4 bảng.
+
+### Cách 2: Pull file DB từ emulator
+```bash
+adb pull /data/data/com.example.hhhhhhhhhh/databases/news_app.db
+```
+Mở file `news_app.db` bằng [DB Browser for SQLite](https://sqlitebrowser.org/).
+
+---
+
+## 7. Test
 
 ```bash
-# 1. Cài dependencies
-flutter pub get
-
-# 2. Đảm bảo google-services.json đã có ở android/app/
-
-# 3. Chạy trên Android (mở emulator trong Android Studio)
-flutter run
-
-# Test
-flutter test
-
-# Analyze
-flutter analyze
+flutter test     # 3 tests về Article model
+flutter analyze  # 0 errors
 ```
-
----
-
-## 7. Troubleshooting
-
-### "Default FirebaseApp is not initialized"
-→ Chưa có `google-services.json`, làm lại Bước 2.
-
-### "PERMISSION_DENIED: Missing or insufficient permissions"
-→ Chưa cập nhật Firestore Rules, làm Bước 5.
-
-### Không build được trên Android
-→ Kiểm tra `minSdk = 23` trong `android/app/build.gradle.kts`.
-→ Chạy `flutter clean && flutter pub get`.
 
 ---
 

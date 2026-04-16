@@ -1,4 +1,3 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -14,9 +13,7 @@ import 'repositories/search_history_repository.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+void main() {
   runApp(const NewsApp());
 }
 
@@ -26,7 +23,7 @@ class NewsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Inject dependencies theo Clean Architecture:
-    //   Repository (Data: Firebase Auth + Firestore + HTTP)
+    //   Repository (Data: SQLite + HTTP)
     //     -> Provider (ViewModel)
     //       -> View
     final articleRepo = ArticleRepository();
@@ -77,13 +74,12 @@ class AuthGate extends StatelessWidget {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
 
-    // Bind user uid vào các provider phụ thuộc (Favorites + SearchHistory).
-    // Khi login/logout, provider tự subscribe/unsubscribe Firestore stream.
-    final uid = auth.user?.uid;
+    // Bind user_id vào FavoritesProvider + SearchHistoryProvider.
+    final userId = auth.user?.id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!context.mounted) return;
-      context.read<FavoritesProvider>().bindUser(uid);
-      context.read<SearchHistoryProvider>().bindUser(uid);
+      context.read<FavoritesProvider>().bindUser(userId);
+      context.read<SearchHistoryProvider>().bindUser(userId);
     });
 
     switch (auth.status) {
